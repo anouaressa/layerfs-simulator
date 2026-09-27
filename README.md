@@ -15,6 +15,48 @@ modify the host filesystem.
 - Path normalization and checks against traversal and file/directory conflicts.
 - Interactive command-line demo and Go library API.
 
+## How it works
+
+The merged filesystem reads the writable upper layer first. If there is no
+upper copy, it checks whiteouts and then searches lower layers from highest to
+lowest priority. Writes go only to the upper layer; removals create whiteouts
+so lower-layer files stay unchanged but disappear from the merged view.
+
+```mermaid
+flowchart TD
+	caller[CLI or Go caller] --> operation{Operation}
+
+	subgraph Read[Read: ReadFile]
+		read[ReadFile path] --> normalize[Normalize and validate path]
+		normalize --> upperCheck{File in upper layer?}
+		upperCheck -->|Yes| upperData[Return upper-layer contents]
+		upperCheck -->|No| whiteoutCheck{Hidden by whiteout?}
+		whiteoutCheck -->|Yes| missing[Return not found]
+		whiteoutCheck -->|No| lowerCheck[Search lower layers by priority]
+		lowerCheck --> lowerFound{File found?}
+		lowerFound -->|Yes| lowerData[Return first matching lower file]
+		lowerFound -->|No| missing
+	end
+
+	subgraph Write[Write: WriteFile]
+		write[WriteFile path and data] --> writeValidate[Validate path and parent]
+		writeValidate --> upperStore[Store a copy in upper layer]
+		upperStore -. next read finds the upper copy .-> upperCheck
+	end
+
+	subgraph Delete[Remove]
+		remove[Remove path] --> removeCheck{Target exists?}
+		removeCheck -->|No| missing
+		removeCheck -->|Yes| clearUpper[Remove matching upper subtree]
+		clearUpper --> addWhiteout[Add whiteout for path]
+		addWhiteout -. next read hides lower path and descendants .-> whiteoutCheck
+	end
+
+	operation --> read
+	operation --> write
+	operation --> remove
+```
+
 ## Requirements
 
 - Go 1.22 or newer.
